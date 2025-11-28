@@ -1,4 +1,4 @@
-# Photo Sorter 📸
+# Photo Sortr 📸
 
 A powerful command-line tool for organizing photos into event folders with intelligent duplicate detection.
 
