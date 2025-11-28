@@ -1,0 +1,7 @@
+# Photo Sorter Requirements
+# Python 3.8+
+
+# Core dependencies for perceptual hashing
+Pillow>=10.0.0
+imagehash>=4.3.1
+
