@@ -82,6 +82,7 @@ def show_menu(event_folders: List[str], current_index: int, total: int,
     print("  [N]   Create new event folder")
     print("  [S]   Skip this photo")
     print("  [D]   Delete this photo")
+    print("  [Z]   Undo last action")
     if show_duplicate_option:
         print("  [U]   Mark as duplicate")
     print("  [Q]   Quit and save progress")

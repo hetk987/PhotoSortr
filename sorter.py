@@ -5,6 +5,7 @@ Orchestrates the photo sorting workflow.
 
 import os
 import logging
+import shutil
 from typing import List, Optional
 from datetime import datetime
 
@@ -28,7 +29,7 @@ def setup_logging(root_dir: str) -> logging.Logger:
     """
     log_dir = os.path.join(root_dir, '.photosorter')
     os.makedirs(log_dir, exist_ok=True)
-    
+        
     log_file = os.path.join(log_dir, 'sorter.log')
     
     # Create logger
@@ -69,6 +70,7 @@ class PhotoSorter:
             duplicate_threshold: Perceptual hash distance threshold for duplicates
         """
         self.root_dir = os.path.abspath(root_dir)
+        self.trash_dir = os.path.join(self.root_dir, '.trash')
         self.images: List[str] = []
         self.current_index: int = 0
         self.sorted_count: int = 0
@@ -137,6 +139,22 @@ class PhotoSorter:
         self.load_state()
         self.load_hash_database()
         
+        # Check for existing trash from previous session
+        os.makedirs(self.trash_dir, exist_ok=True)
+        if os.path.exists(self.trash_dir):
+            try:
+                files = os.listdir(self.trash_dir)
+                if files:
+                    print(f"\n⚠️  Found {len(files)} file(s) in trash from previous session")
+                    response = input("Empty trash from previous session? (y/n): ").strip().lower()
+                    if response == 'y':
+                        self._empty_trash()
+                        print("Trash cleared.\n")
+                    else:
+                        print("Trash will be emptied when this session ends.\n")
+            except Exception as e:
+                self.logger.warning(f"Error checking trash on startup: {e}")
+        
         try:
             self._sorting_loop()
         except KeyboardInterrupt:
@@ -147,6 +165,7 @@ class PhotoSorter:
             self.logger.error(f"Fatal error during sorting: {e}", exc_info=True)
             raise
         finally:
+            self._empty_trash()
             self._print_summary()
             self._log_summary()
     
@@ -269,6 +288,12 @@ class PhotoSorter:
                 dest_folder = os.path.join(self.root_dir, folder_name)
                 try:
                     new_path = folder_manager.move_photo(photo_path, dest_folder)
+                    action = {
+                        'action': 'moved',
+                        'old_path': photo_path,
+                        'new_path': new_path
+                    }
+                    state_manager.add_action_to_history(self.state, action)
                     print(f"\nMoved to: {folder_name}")
                     self.logger.info(f"MOVED: {os.path.basename(photo_path)} -> {folder_name}")
                     return 'moved'
@@ -291,6 +316,12 @@ class PhotoSorter:
                     dest_folder = folder_manager.create_event_folder(
                         self.root_dir, folder_name)
                     new_path = folder_manager.move_photo(photo_path, dest_folder)
+                    action = {
+                        'action': 'moved',
+                        'old_path': photo_path,
+                        'new_path': new_path
+                    }
+                    state_manager.add_action_to_history(self.state, action)
                     print(f"\nCreated folder '{folder_name}' and moved photo.")
                     self.logger.info(f"CREATED FOLDER: {folder_name}")
                     self.logger.info(f"MOVED: {os.path.basename(photo_path)} -> {folder_name}")
@@ -318,7 +349,16 @@ class PhotoSorter:
         elif choice == 'D':
             if cli_ui.prompt_confirmation("Are you sure you want to delete this photo?"):
                 try:
-                    os.remove(photo_path)
+                    self._move_to_trash(photo_path)
+                    # Store the full path to the file in trash
+                    filename = os.path.basename(photo_path)
+                    trash_file_path = os.path.join(self.trash_dir, filename)
+                    action = {
+                        'action': 'deleted',
+                        'old_path': photo_path,
+                        'new_path': trash_file_path
+                    }
+                    state_manager.add_action_to_history(self.state, action)
                     print("\nPhoto deleted.")
                     self.logger.warning(f"DELETED: {photo_path}")
                     return 'deleted'
@@ -331,6 +371,14 @@ class PhotoSorter:
             else:
                 print("\nDeletion cancelled.")
                 return 'retry'
+            
+        # Undo last action
+        elif choice == 'Z':
+            print("\nUndoing last action...")
+            self._undo_last_action()
+            print("\nLast action undone.")
+            self.logger.info("UNDO: Last action undone")
+            return 'retry'
         
         # Quit
         elif choice == 'Q':
@@ -370,7 +418,92 @@ class PhotoSorter:
         except Exception as e:
             print(f"\nError moving duplicate: {e}")
             self.logger.error(f"Error moving duplicate {photo_path}: {e}")
+            
+    def _move_to_trash(self, photo_path: str) -> None:
+        """Move a photo to the trash directory."""
+        try:
+            shutil.move(photo_path, self.trash_dir)
+            print(f"\nMoved to trash: {photo_path}")
+            self.logger.info(f"MOVED TO TRASH: {photo_path}")
+        except Exception as e:
+            print(f"\nError moving to trash: {e}")
+            self.logger.error(f"Error moving {photo_path} to trash: {e}")
     
+    def _empty_trash(self) -> None:
+        """Permanently delete all files in the trash directory."""
+        if not os.path.exists(self.trash_dir):
+            return
+        
+        # Count files in trash
+        try:
+            files = os.listdir(self.trash_dir)
+            file_count = len(files)
+            
+            if file_count == 0:
+                return
+            
+            # Inform user
+            print(f"\n🗑️  Permanently deleting {file_count} photo(s) from trash...")
+            self.logger.info(f"Emptying trash: {file_count} files")
+            
+            # Delete the entire trash directory
+            shutil.rmtree(self.trash_dir)
+            
+            # Recreate empty trash directory
+            os.makedirs(self.trash_dir, exist_ok=True)
+            
+            print("✓ Trash emptied")
+            self.logger.info("Trash emptied successfully")
+            
+        except Exception as e:
+            print(f"⚠️  Error emptying trash: {e}")
+            self.logger.error(f"Failed to empty trash: {e}")
+    
+    def _undo_last_action(self) -> None:
+        """Undo the last action."""
+        # Check if there are any actions to undo
+        if not self.state.get('action_history') or len(self.state['action_history']) == 0:
+            print("\nNo actions to undo.")
+            self.logger.info("Undo attempted but no actions in history")
+            return
+        
+        last_action = state_manager.get_last_action(self.state)
+        
+        try:
+            if last_action['action'] == 'moved':
+                # For moved files, new_path is the full path to the file in the destination folder
+                # old_path is the original location
+                if os.path.exists(last_action['new_path']):
+                    shutil.move(last_action['new_path'], last_action['old_path'])
+                    self.sorted_count -= 1
+                    self.current_index -= 1  # Go back to the previous photo
+                    state_manager.pop_last_action(self.state)
+                    self.save_state()
+                    print(f"\nUndone: Restored {os.path.basename(last_action['old_path'])} to original location")
+                    self.logger.info(f"UNDO MOVE: {last_action['new_path']} -> {last_action['old_path']}")
+                else:
+                    print(f"\nCannot undo: File not found at {last_action['new_path']}")
+                    self.logger.warning(f"UNDO FAILED: File not found at {last_action['new_path']}")
+                    
+            elif last_action['action'] == 'deleted':
+                # For deleted files, new_path is the full path to the file in trash
+                # old_path is the original location
+                if os.path.exists(last_action['new_path']):
+                    shutil.move(last_action['new_path'], last_action['old_path'])
+                    self.deleted_count -= 1
+                    self.current_index -= 1  # Go back to the previous photo
+                    state_manager.pop_last_action(self.state)
+                    self.save_state()
+                    print(f"\nUndone: Restored {os.path.basename(last_action['old_path'])} from trash")
+                    self.logger.info(f"UNDO DELETE: {last_action['new_path']} -> {last_action['old_path']}")
+                else:
+                    print(f"\nCannot undo: File not found in trash")
+                    self.logger.warning(f"UNDO FAILED: File not found at {last_action['new_path']}")
+                    
+        except Exception as e:
+            print(f"\nError undoing action: {e}")
+            self.logger.error(f"UNDO FAILED: {e}")
+        
     def _print_summary(self) -> None:
         """Print summary of the sorting session."""
         cli_ui.print_summary(self.sorted_count, self.skipped_count, 

@@ -48,7 +48,8 @@ def load_state(year_dir: str) -> Dict[str, Any]:
             'skipped_count': 0,
             'deleted_count': 0,
             'duplicate_count': 0,
-            'skipped_files': []
+            'skipped_files': [],
+            'action_history': []
         }
     
     try:
@@ -62,7 +63,8 @@ def load_state(year_dir: str) -> Dict[str, Any]:
             'skipped_count': 0,
             'deleted_count': 0,
             'duplicate_count': 0,
-            'skipped_files': []
+            'skipped_files': [],
+            'action_history': []
         }
         
         for key, default_value in default_state.items():
@@ -127,7 +129,52 @@ def add_skipped_file(state: Dict[str, Any], filepath: str) -> None:
     if filepath not in state['skipped_files']:
         state['skipped_files'].append(filepath)
 
+def add_action_to_history(state: Dict[str, Any], action: Dict[str, any]) -> None:
+    """
+    Add a action to the action history list.
+    
+    Args:
+        state: State dictionary to update
+        action: New action information
+    """
+    if 'action_history' not in state:
+        state['action_history'] = []
+    
+    if action not in state['action_history']:
+        state['action_history'].append(action)
 
+def get_last_action(state: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Return last action from action history.
+    
+    Args:
+        state: State dictionary to update
+    """
+    if 'action_history' not in state:
+        state['action_history'] = []
+        return None
+    
+    if state['action_history'] == []:
+        return None
+    
+    return state['action_history'][-1]
+
+def pop_last_action(state: Dict[str, Any]) -> None:
+    """
+    Deletes last action from action history.
+    
+    Args:
+        state: State dictionary to update
+    """
+    if 'action_history' not in state:
+        state['action_history'] = []
+        return None
+    
+    if state['action_history'] == []:
+        return None
+    
+    state['action_history'].pop(-1)
+    
 def clear_state(year_dir: str) -> None:
     """
     Clear/delete the state file.
